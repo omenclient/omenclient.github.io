@@ -12,7 +12,7 @@ export default definePatch(({ insertCode, modifyCode, replaceCode, replaceOne })
   // Add FX Client version info to the game version window
   modifyCode(`4, 1, new g(__L(), b.c + "<br>" + d.e.f("/changelog")
     ${insert(` + "<br><br><b>" + "Omen Client v" + __fx.version
-      + "<br><a href='https://discord.gg/dyxcwdNKwK' target='_blank'>Omen Client Discord server</a>"`)} /*...*/)`)
+      + "<br><a href='https://discord.gg/Rqcuvq7RHz' target='_blank'>Omen Client Discord server</a>"`)} /*...*/)`)
   
   // Hide propaganda popup
   replaceOne(
