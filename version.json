@@ -1,0 +1,10 @@
+{
+    "version": "0.6.28",
+    "lastUpdated": "August 11",
+    "changes": [
+        "Merged PR #29 by QZxV4, implementing the following changes:",
+        "The IP Highlighting feature now has more colors, lowering the chance of the same color appearing for different IPs (no effect on different IP but same hash of course), so now it's easier to distinguish groups of shared IPs wihout having to hover over them.",
+        "You can now set nicknames on each entry in the list of accounts you follow, making it easier to figure out who each player is. The feature can be enabled and configured in the FX Client settings."
+    ],
+    "isSignificant": true
+}

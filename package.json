@@ -1,0 +1,34 @@
+{
+  "name": "fxclient",
+  "version": "0.5.3",
+  "description": "A modded territorial.io client",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "build": "node index.js",
+    "build-only": "node build.js",
+    "build-client": "node build.js --skip-patching",
+    "patch": "node build.js --patch-only",
+    "deploy": "npm run build && gh-pages -d build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fxclient/FXclient.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/fxclient/FXclient/issues"
+  },
+  "homepage": "https://github.com/fxclient/FXclient#readme",
+  "dependencies": {
+    "core-js": "^3.44.0",
+    "js-beautify": "^1.14.11",
+    "obscenity": "^0.4.6",
+    "uglify-js": "^3.19.2"
+  },
+  "devDependencies": {
+    "gh-pages": "^6.3.0",
+    "webpack": "^5.95.0"
+  }
+}
