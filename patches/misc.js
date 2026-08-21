@@ -1,36 +1,64 @@
 import { definePatch, insert } from "../modUtils.js"
 import { styleText } from "node:util";
 
-export default definePatch(({ insertCode, modifyCode, replaceCode, replaceOne }) => {
+export default definePatch(({ insertCode, modifyCode, replaceCode }) => {
 
   // Display tick number near the moving bars in the balance box
-  replaceOne(
-    /(zX\.fillStyle=ej===9\?bE\.pW:bE\.oO;var aBL=af\.aBM;var aBN="\+"\+aBL;var tj=zX\.measureText\(aBN\)\.width;var aBO=Math\.floor\(this\.k\/12\);var no=\.5\*\(j\+ti\)\+aBO;if\(no\+tj\+aB9<=j\)\{zX\.fillText\(aBN,Math\.floor\(no\+\.5\*tj\),Math\.floor\(\.3\*this\.k\)\)\}else if\(aBL>=1e3\)\{aBN="\+"\+Math\.floor\(aBL\/1e3\)\+"K";tj=zX\.measureText\(aBN\)\.width;if\(no\+tj\+aB9<=j\)\{zX\.fillText\(aBN,Math\.floor\(no\+\.5\*tj\),Math\.floor\(\.3\*this\.k\)\)\}\})/g,
-    `$1;if(__fx.settings.displayTickNumber)zX.fillText(9-ej,Math.floor(aB9*2+aBO),Math.floor(.3*this.k));`
-  )
+  modifyCode(`zH.fillStyle = eh === 9 ? bD.pD : bD.o5;
+		var aB7 = ae.aB8;
+		var aB9 = "+" + aB7;
+		var tS = zH.measureText(aB9).width;
+		var aBA = Math.floor(this.j / 12);
+		var nV = 0.5 * (i + tR) + aBA;
+		if (nV + tS + aAv <= i) {
+			zH.fillText(aB9, Math.floor(nV + 0.5 * tS), Math.floor(0.3 * this.j));
+		} else if (aB7 >= 1000) {
+			aB9 = "+" + Math.floor(aB7 / 1000) + "K";
+			tS = zH.measureText(aB9).width;
+			if (nV + tS + aAv <= i) {
+				zH.fillText(aB9, Math.floor(nV + 0.5 * tS), Math.floor(0.3 * this.j));
+			}
+		}
+		${insert(`if (__fx.settings.displayTickNumber)
+      zH.fillText(9 - eh, Math.floor(aAv * 2 + aBA), Math.floor(0.3 * this.j));`)}`)
 
   // Add FX Client version info to the game version window
   modifyCode(`4, 1, new g(__L(), b.c + "<br>" + d.e.f("/changelog")
     ${insert(` + "<br><br><b>" + "Omen Client v" + __fx.version
-      + "<br><a href='https://discord.gg/Rqcuvq7RHz' target='_blank'>Omen Client Discord server</a>"`)} /*...*/)`)
+      + "<br><a href='https://discord.gg/Rqcuvq7RHz' target='_blank'>Omen Client Discord server</a></b>"`)} /*...*/)`)
   
   // Hide propaganda popup
-  replaceOne(
-    /ed=bi\.eZ\+60\*1e3;\(new ek\)\.show\(ec\.el,ec\.colors,ec\.id\);ec=null;return true/g,
-    `$&;var currentPropaganda=__fx.propagandaTracker.getCurrentPropaganda();if(currentPropaganda){if(__fx.settings.hidePropagandaPopups)__fx.propagandaTracker.onPopupShown();else if(!currentPropaganda.isSystemMessage)bi.eZ+=100*60*1000;}`
+  insertCode(`/* here */
+    a = b.c + 60 * 1000;
+    (new ea()).show(eS.eb, eS.colors, eS.id);
+    eS = null;
+    return true;`, `if (__fx.settings.hidePropagandaPopup || __fx.customLobby.isActive()) return;`)
+  modifyCode(`if (!a.b.c(0)) {
+			d = e.f + 1000 * 1;
+			return;
+		} ${insert(`if (!__fx.settings.hidePropagandaPopup && !__fx.customLobby.isActive())`)} a.g.h(5);`)
+
+  // Disable built-in Territorial.io error reporting
+  insertCode(
+    `window.removeEventListener("error", err);
+    msg = e.lineno + " " + e.colno + "|" + stack; /* here */`,
+    `__fx.reportError(e, msg);
+    return alert("Error:\\n" + e.filename + " " + e.lineno + " " + e.colno + " " + e.message);`
   )
 
-  // Report errors using custom function
-  replaceOne(/c="SE\|"\+c\+"\|"\+e;console\.log\(c\);alert\(c\)/g, `c="SE|"+c+"|"+e;console.log(c);__fx.reportError(e,c);alert(c)`)
+  // use textContent so that usernames dont get parsed that contain html code
+  replaceCode(
+    `cell.style.width = data.columnWidths[columnIndex] + "%";
+    cell.innerHTML = rows[rowIndex][columnIndex].content;`,
 
-  // Invalid hostname detection avoidance (ensures Turnstile captcha and server anti-bot validation pass)
-  replaceOne(/this\.(\w+)=\w+\.indexOf\("territorial\.io"\)>=0;/g, `this.$1 = true; this.e3 = true; this.hostnameIsValid = true;`)
-  replaceOne(/window\.turnstile\.remove\(em\);/g, `try{window.turnstile.remove(em)}catch(e){}`)
+    `cell.style.width = data.columnWidths[columnIndex] + "%";
+    cell.textContent = rows[rowIndex][columnIndex].content;`
+  )
 
   // for the custom lobby version
   try {
     modifyCode(`new a("⚔️<br>" + __L(), function() {
-      ${insert(`if (__fx.isCustomLobbyVersion) alert("This version is for use with custom lobbies only. For normal multiplayer, use the version at https://fxclient.github.io/FXclient/")
+      ${insert(`if (__fx.isCustomLobbyVersion) alert("This version is for use with custom lobbies only. For normal multiplayer, use the version at https://omenclient.github.io/")
       else`)} b(0);
 		}, ${insert(`__fx.isCustomLobbyVersion ? "rgba(50, 50, 50, 0.6)" : `)} c.d)`)
   } catch (error) {

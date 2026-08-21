@@ -1,10 +1,10 @@
 {
-    "version": "0.6.28",
-    "lastUpdated": "August 11",
+    "version": "0.6.29",
+    "lastUpdated": "August 21",
     "changes": [
-        "Merged PR #29 by QZxV4, implementing the following changes:",
-        "The IP Highlighting feature now has more colors, lowering the chance of the same color appearing for different IPs (no effect on different IP but same hash of course), so now it's easier to distinguish groups of shared IPs wihout having to hover over them.",
-        "You can now set nicknames on each entry in the list of accounts you follow, making it easier to figure out who each player is. The feature can be enabled and configured in the FX Client settings."
+        "Rebuilt against Territorial.io 2.16.46 — the client works with the current game update again.",
+        "The automation's game-internal lookups (border tiles, tile ownership, attack sending and cancelling) were re-derived for this game build and are now verified at build time, so a future game update fails the build instead of silently breaking targeting.",
+        "Picked up the FX Client 0.6.29 fixes: gamemode-aware IP highlighting, player names no longer parsed as HTML, and the obsolete hostname-detection patch removed."
     ],
     "isSignificant": true
 }

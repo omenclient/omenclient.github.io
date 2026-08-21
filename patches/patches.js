@@ -33,7 +33,18 @@ export default (/** @type {ModUtils} */ modUtils) => {
 }
 //export const requiredVariables = ["game", "playerId", "playerData", "rawPlayerNames", "gIsSingleplayer", "playerTerritories"];
 
-function applyPatches(/** @type {ModUtils} */ { replace, replaceOne, replaceRawCode, safeDictionary, matchOne, matchRawCode, escapeRegExp }) {
+function applyPatches(/** @type {ModUtils} */ modUtils) {
+    const { replace, replaceOne, replaceRawCode, safeDictionary, matchOne, matchRawCode, escapeRegExp } = modUtils;
+
+    // A bare `replace` silently does nothing when it matches nothing, which is how a patch
+    // quietly dies across a game update. Warn instead of throwing: the patches that use this
+    // are cosmetic, so a stale one should not block a build.
+    const replaceOrWarn = (description, expression, replacement) => {
+        const before = modUtils.script;
+        replace(expression, replacement);
+        if (modUtils.script === before)
+            console.warn(`Warning: patch "${description}" matched nothing in this game build`);
+    };
 
     // Constants for easy usage of otherwise long variable access expressions
     const dict = safeDictionary;
@@ -41,15 +52,68 @@ function applyPatches(/** @type {ModUtils} */ { replace, replaceOne, replaceRawC
     const rawPlayerNames = `${dict.playerData}.${dict.rawPlayerNames}`;
     const gIsSingleplayer = `${dict.game}.${dict.gIsSingleplayer}`;
 
+    // Raw game-internal names the injected automation code reads directly. Unlike `dict`,
+    // these are not discovered by build.js's pattern matching: they are the obfuscated
+    // spellings for the game build this client was last updated against (Territorial.io
+    // 2.16.46) and the obfuscator reshuffles them on every release. The readable names are
+    // from the deobfuscation project in ../deobfuscate (its function-mappings.json /
+    // property-mappings.json translate a name from one release to the next). Every entry is
+    // checked below for presence, which catches the common case where a name disappears
+    // outright. It cannot catch a name that survives but now belongs to something else -- e.g.
+    // "h8", the 2.16.33 spelling of playerTiles, still exists in 2.16.46 as an unrelated field --
+    // so after a game update, re-derive these from ../deobfuscate rather than trusting a green build.
+    const g = {
+        mapData: "ad",                  // global MapData instance
+        attackManager: "ae",            // global AttackManager instance
+        protocolHandler: "bB",          // global ProtocolHandler instance
+        teamUtils: "bv",                // global TeamUtils instance
+        playerTiles: "h7",              // PlayerData.playerTiles[player]: that player's border tiles
+        neighborOffsets: "fT",          // MapData.neighborOffsets: 4-direction offsets, sized to map width
+        isNeutralTile: "fI",            // MapData.isNeutralTile(tile)
+        isOwnedTile: "h1",              // MapData.isOwnedTile(tile)
+        getTileOwner: "fJ",             // MapData.getTileOwner(tile)
+        getAvailableAttackCount: "gY",  // AttackManager.getAvailableAttackCount(player)
+        getAttackTarget: "gd",          // AttackManager.getAttackTarget(player, attackIndex)
+        getAttackValue: "ge",           // AttackManager.getAttackValue(player, attackIndex)
+        gameCommandSender: "hr",        // ProtocolHandler.gameCommandSender
+        sendAttack: "hy",               // GameCommandSender.sendAttack(sliderValue, target)
+        cancelAttack: "q0",             // GameCommandSender.cancelAttack(target)
+        canAttack: "fK",                // TeamUtils.canAttack(attacker, target)
+        mapIsRendered: "xr",            // MapManager.xr: the map raster has been drawn and is on screen
+    };
+
+    // Each raw name above must at least still appear in the game script in the access shape the
+    // automation uses it in. A missing one means the game update moved it: look the readable
+    // name up in ../deobfuscate/generated/*-mappings.json to find its new spelling. Presence is
+    // necessary, not sufficient -- see the note on the table above.
+    [
+        [`${g.mapData}.${g.neighborOffsets}`, "MapData.neighborOffsets"],
+        [`${g.mapData}.${g.isNeutralTile}(`, "MapData.isNeutralTile"],
+        [`${g.mapData}.${g.isOwnedTile}(`, "MapData.isOwnedTile"],
+        [`${g.mapData}.${g.getTileOwner}(`, "MapData.getTileOwner"],
+        [`${dict.playerData}.${g.playerTiles}`, "PlayerData.playerTiles"],
+        [`${g.attackManager}.${g.getAvailableAttackCount}(`, "AttackManager.getAvailableAttackCount"],
+        [`${g.attackManager}.${g.getAttackTarget}(`, "AttackManager.getAttackTarget"],
+        [`${g.attackManager}.${g.getAttackValue}(`, "AttackManager.getAttackValue"],
+        [`${g.protocolHandler}.${g.gameCommandSender}.${g.sendAttack}(`, "GameCommandSender.sendAttack"],
+        [`${g.protocolHandler}.${g.gameCommandSender}.${g.cancelAttack}(`, "GameCommandSender.cancelAttack"],
+        [`${g.teamUtils}.${g.canAttack}(`, "TeamUtils.canAttack"],
+        [`${dict.mapHolder}.${g.mapIsRendered}`, "MapManager.xr"],
+    ].forEach(([access, readableName]) => {
+        if (!modUtils.script.includes(access))
+            throw new Error(`Automation raw name check failed: "${access}" (${readableName}) is not in this game build. `
+                + `The game was updated -- re-derive it from ../deobfuscate and update the "g" table in patches/patches.js.`);
+    });
+
     // Replace assets
     replaceOne(/(\(4,"crown",4,")[^"]+"\),/g, "$1" + assets.crownIcon + "\"),");
     replaceOne(/(\(6,"territorial\.io",6,")[^"]+"\),/g, "$1" + assets.fxClientLogo + "\"),");
     replaceOne(/(\(22,"logo",8,")[^"]+"\)/g, "$1" + assets.smallLogo + "\")");
 
     // Add update information
-    replaceRawCode(`new k("🚀 New Game Update","The game was updated! Please reload the game.",!0,[`,
-        `new k("🚀 New Game Update","The game was updated! Please reload the game."
-        + "<div style='border: white; border-width: 1px; border-style: solid; margin: 10px; padding: 5px;'><h2>Omen Client may need a patch for this Territorial.io update.</h2><p>You can still try singleplayer, then rebuild after updating patches.</p></div>",!0,[`
+    replaceRawCode(`new k("🚀 New Game Update","The game was updated! Please reload the game. An internet connection is required.",!0,[`,
+        `new k("🚀 New Game Update","The game was updated! Please reload the game. An internet connection is required."
+        + "<div style='border: white; border-width: 1px; border-style: solid; margin: 10px; padding: 5px;'><h2>Omen Client may need a patch for this Territorial.io update.</h2><p>You can still try singleplayer, then rebuild after updating patches.</p></div>",true,[`
     );
 
     // Max size for custom maps: from 4096x4096 to 8192x8192
@@ -95,45 +159,30 @@ function applyPatches(/** @type {ModUtils} */ { replace, replaceOne, replaceRawC
     { // Opening automation
         replaceOne(/(function \w+\(\)\{)(var \w+=0,\w+=0;this\.\w+=function\(\w+,\w+\)\{)/g,
             `$1
-            // ac, ad, aM, b1, bA, bC, bu are hardcoded obfuscated-name guesses left over from past
-            // game updates; several are stale in this build (undeclared bare identifiers -- would
-            // throw ReferenceError on every read, crashing the render loop since some of these run
-            // every tick via onTick/onTickAutoAttack). typeof never throws even for an undeclared
-            // identifier, so this captures whichever ones happen to still resolve, once, safely.
-            // Everything below is written with ?. so a missing manager degrades to a safe default
-            // (false/0/null/no-op) instead of crashing. TODO: find current names for the still-stale
-            // ones (see docs/code-history.md) and replace these with real, non-optional references.
-            var __fxAc = typeof ac !== "undefined" ? ac : undefined;
-            var __fxAd = typeof ad !== "undefined" ? ad : undefined;
-            var __fxAM = typeof aM !== "undefined" ? aM : undefined;
-            var __fxB1 = typeof b1 !== "undefined" ? b1 : undefined;
-            var __fxBA = typeof bA !== "undefined" ? bA : undefined;
-            var __fxBC = typeof bC !== "undefined" ? bC : undefined;
-            var __fxBu = typeof bu !== "undefined" ? bu : undefined;
-            // "this.ho"/"this.hp"/"this.xj" were previous builds' names for the click-to-attack
-            // dispatcher; none exist anymore. Current build calls it "aAN(code)", where code 0 is
-            // the primary attack action -- confirmed by reading its body: 0===code dispatches the
-            // normal attack path (ending in pH.a2J.a7g, the already-confirmed attack dispatcher),
-            // 1===code the boat alt-attack (pH.a2J.qD), 2===code the nuke alt-attack (pH.a2J.qG).
+            // MapData's global instance. The name is asserted at build time, but it is still read
+            // through typeof and used with ?. everywhere below: this block runs every tick via
+            // onTick/onTickAutoAttack, so a bad read must degrade to a safe default (false/0/null/
+            // no-op) rather than throw a ReferenceError and take the render loop down with it.
+            var __fxAd = typeof ${g.mapData} !== "undefined" ? ${g.mapData} : undefined;
+            // Attacks are not sent through the click-to-attack UI dispatcher at all: attackFreeLand
+            // below calls GameCommandSender.sendAttack directly, which is the same call the UI path
+            // ends in, minus the input handling.
             __fx.openingAutomation.attack=()=> __fx.openingAutomation.attackFreeLand();
-            // playerData.gp does NOT exist in this build (checked: never assigned anywhere in
-            // build/game.js outside our own patch code, so it's always undefined) -- the "TeamUtils
-            // .classifyPlayerTiles" comment this replaced was a stale guess from an older build.
-            // The real per-player "attack border" tile list is playerData.h8: MapData's own
-            // classification loop (build/game.js, PlayerData constructor region) pushes a tile onto
-            // it exactly when MapData.zE(tile, player) -- hasAdjacentAttackableTile -- is true, i.e.
-            // the tile has a neutral-or-enemy neighbor. __fxAd (MapData's global instance, confirmed
-            // via new-call-site + property-mapping cross-reference) exposes the real primitives to
-            // narrow that down to neutral-only: .fU is the real 4-direction neighbor offset array
-            // (Int32Array sized to the actual map width, NOT a hardcoded stride) and .fJ(tile) is the
-            // real isNeutralTile check. __fxNeutralBorderTileCount walks h8's tiles' neighbors with
-            // those and dedupes, matching ThighClient's getNeutralBorderTileCount exactly.
+            // The per-player "attack border" tile list is PlayerData.playerTiles (g.playerTiles):
+            // MapData's classification loop pushes a tile onto it exactly when
+            // MapData.hasAdjacentAttackableTile(tile, player) is true, i.e. the tile has a
+            // neutral-or-enemy neighbor. __fxAd (MapData's global instance) supplies the primitives
+            // that narrow that down to neutral-only: g.neighborOffsets is the real 4-direction
+            // neighbor offset array (Int32Array sized to the actual map width, NOT a hardcoded
+            // stride) and g.isNeutralTile(tile) is the real neutral check. __fxNeutralBorderTileCount
+            // walks those tiles' neighbors and dedupes, matching ThighClient's
+            // getNeutralBorderTileCount exactly.
             var __fxNeutralBorderTileCount = ()=> {
                 var player = ${dict.game}.${dict.playerId};
-                var borderTiles = ${dict.playerData}.h8?.[player];
+                var borderTiles = ${dict.playerData}.${g.playerTiles}?.[player];
                 if (!borderTiles || !borderTiles.length) return 0;
-                var offsets = __fxAd?.fU;
-                if (!offsets || typeof __fxAd.fJ !== "function") return 0;
+                var offsets = __fxAd?.${g.neighborOffsets};
+                if (!offsets || typeof __fxAd.${g.isNeutralTile} !== "function") return 0;
                 var seen = new Set();
                 var count = 0;
                 for (var i = borderTiles.length - 1; i >= 0; i--) {
@@ -142,7 +191,7 @@ function applyPatches(/** @type {ModUtils} */ { replace, replaceOne, replaceRawC
                         var neighbor = tile + offsets[d];
                         var key = neighbor >> 2;
                         if (seen.has(key)) continue;
-                        if (!__fxAd.fJ(neighbor)) continue;
+                        if (!__fxAd.${g.isNeutralTile}(neighbor)) continue;
                         seen.add(key);
                         count++;
                     }
@@ -154,7 +203,8 @@ function applyPatches(/** @type {ModUtils} */ { replace, replaceOne, replaceRawC
             // main loop -- not the elaborate scored findRawBotAttackTarget, which is dead code there,
             // never called from anything reachable at runtime). Real bot-phase attacks there are just:
             // walk the player's border tiles' real neighbors, collect adjacent bot-owned tiles,
-            // keep the single largest one under 0.2% density. Reuses the same h8/__fxAd primitives as
+            // keep the single largest one under 0.2% density. Reuses the same playerTiles/__fxAd
+            // primitives as
             // __fxNeutralBorderTileCount, swapped from "is this neighbor neutral" to "is this neighbor
             // an attackable bot" (owned + in the bot id range). Deliberately does NOT touch the attack
             // percent -- ThighClient's own version calls attackTargetWithCurrentPercent (reads
@@ -162,10 +212,10 @@ function applyPatches(/** @type {ModUtils} */ { replace, replaceOne, replaceRawC
             // whatever __fx.keybindFunctions.getAttackPercentage() already is, same as everywhere else.
             __fx.openingAutomation.findBorderBotAttackTarget=()=> {
                 var player = ${dict.game}.${dict.playerId};
-                var borderTiles = ${dict.playerData}.h8?.[player];
+                var borderTiles = ${dict.playerData}.${g.playerTiles}?.[player];
                 if (!borderTiles || !borderTiles.length) return -1;
-                var offsets = __fxAd?.fU;
-                if (!offsets || typeof __fxAd.h2 !== "function" || typeof __fxAd.fK !== "function") return -1;
+                var offsets = __fxAd?.${g.neighborOffsets};
+                if (!offsets || typeof __fxAd.${g.isOwnedTile} !== "function" || typeof __fxAd.${g.getTileOwner} !== "function") return -1;
                 var humans = ${dict.game}.${dict.gHumans};
                 var maxPlayers = ${dict.game}.${dict.gLobbyMaxJoin} || 512;
                 var recentTargets = __fx.openingAutomation.autoAttackRecentTargets;
@@ -177,8 +227,8 @@ function applyPatches(/** @type {ModUtils} */ { replace, replaceOne, replaceRawC
                     var tile = borderTiles[i];
                     for (var d = 0; d < 4; d++) {
                         var neighbor = tile + offsets[d];
-                        if (!__fxAd.h2(neighbor)) continue;
-                        var owner = __fxAd.fK(neighbor);
+                        if (!__fxAd.${g.isOwnedTile}(neighbor)) continue;
+                        var owner = __fxAd.${g.getTileOwner}(neighbor);
                         if (owner < humans || owner >= maxPlayers || owner === player || seen.has(owner)) continue;
                         seen.add(owner);
                         if (recentTargets?.has(owner) && lastTick - recentTargets.get(owner) < 30) continue;
@@ -195,12 +245,12 @@ function applyPatches(/** @type {ModUtils} */ { replace, replaceOne, replaceRawC
             };
             __fx.openingAutomation.getDeployedTroops=()=> {
                 var player = ${dict.game}.${dict.playerId};
-                if (typeof ae !== "undefined" && typeof ae.gZ === "function") {
+                if (typeof ${g.attackManager} !== "undefined" && typeof ${g.attackManager}.${g.getAvailableAttackCount} === "function") {
                     var freeLandTarget = ${dict.game}.${dict.gLobbyMaxJoin} || 512;
-                    var count = ae.gZ(player) || 0;
+                    var count = ${g.attackManager}.${g.getAvailableAttackCount}(player) || 0;
                     for (var attackIndex = count - 1; attackIndex >= 0; attackIndex--) {
-                        var target = ae.ge(player, attackIndex);
-                        if (target === freeLandTarget) return ae.gf(player, attackIndex) || 0;
+                        var target = ${g.attackManager}.${g.getAttackTarget}(player, attackIndex);
+                        if (target === freeLandTarget) return ${g.attackManager}.${g.getAttackValue}(player, attackIndex) || 0;
                     }
                 }
                 return 0;
@@ -215,8 +265,8 @@ function applyPatches(/** @type {ModUtils} */ { replace, replaceOne, replaceRawC
                 var freeLandTarget = ${dict.game}.${dict.gLobbyMaxJoin} || 512;
                 var percent = __fx.keybindFunctions.getAttackPercentage();
                 var sliderValue = Math.max(0, Math.min(1023, Math.round(percent * 1024 - 1)));
-                if (typeof bB !== "undefined" && bB.hs && typeof bB.hs.hz === "function") {
-                    bB.hs.hz(sliderValue, freeLandTarget);
+                if (typeof ${g.protocolHandler} !== "undefined" && ${g.protocolHandler}.${g.gameCommandSender} && typeof ${g.protocolHandler}.${g.gameCommandSender}.${g.sendAttack} === "function") {
+                    ${g.protocolHandler}.${g.gameCommandSender}.${g.sendAttack}(sliderValue, freeLandTarget);
                     return true;
                 }
                 return false;
@@ -228,19 +278,27 @@ function applyPatches(/** @type {ModUtils} */ { replace, replaceOne, replaceRawC
                 var sliderValue = Math.max(0, Math.min(1023, Math.round(percent * 1024 - 1)));
                 __fx.keybindFunctions.setAbsolute(percent);
                 __fx.keybindFunctions.repaintAttackPercentageBar();
-                if (typeof bB !== "undefined" && bB.hs && typeof bB.hs.hz === "function") {
-                    bB.hs.hz(sliderValue, freeLandTarget);
+                if (typeof ${g.protocolHandler} !== "undefined" && ${g.protocolHandler}.${g.gameCommandSender} && typeof ${g.protocolHandler}.${g.gameCommandSender}.${g.sendAttack} === "function") {
+                    ${g.protocolHandler}.${g.gameCommandSender}.${g.sendAttack}(sliderValue, freeLandTarget);
                     return true;
                 }
                 return false;
             };
             var __fxCanAttack = (attacker, target)=> !${dict.game}.${dict.gIsTeamGame};
             var __fxBorders = (left, right)=> {
-                if (typeof bv !== "undefined" && typeof bv.fL === "function") {
-                    return bv.fL(left, right);
+                if (typeof ${g.teamUtils} !== "undefined" && typeof ${g.teamUtils}.${g.canAttack} === "function") {
+                    return ${g.teamUtils}.${g.canAttack}(left, right);
                 }
                 return true;
             };
+            // Deliberately inert stubs. The scoring helpers that use them (inferBotAttackTarget,
+            // getBotExposure and the map-walking branches of the safe/best bot scorers) therefore
+            // always fall through to their empty result, which is the behaviour the current
+            // targeting was tuned against -- do not "fix" them without re-running the benchmarks.
+            // The real primitives now exist on __fxAd (g.neighborOffsets / g.isOwnedTile /
+            // g.getTileOwner / g.isNeutralTile) if these are ever wired up for real; note they also
+            // read ${dict.playerData}.gp / .go for the bot's tiles, which is a name from an older
+            // build and no longer resolves either.
             var __fxOffsets = ()=> [1, -1, 512, -512];
             var __fxTileOwned = (tile)=> false;
             var __fxTileOwner = (tile)=> undefined;
@@ -257,8 +315,8 @@ function applyPatches(/** @type {ModUtils} */ { replace, replaceOne, replaceRawC
                 __fx.keybindFunctions.setAbsolute(percent);
                 __fx.keybindFunctions.repaintAttackPercentageBar();
                 var sliderValue = Math.max(0, Math.min(1023, Math.round(percent * 1024 - 1)));
-                if (typeof bB !== "undefined" && bB.hs && typeof bB.hs.hz === "function") {
-                    bB.hs.hz(sliderValue, target);
+                if (typeof ${g.protocolHandler} !== "undefined" && ${g.protocolHandler}.${g.gameCommandSender} && typeof ${g.protocolHandler}.${g.gameCommandSender}.${g.sendAttack} === "function") {
+                    ${g.protocolHandler}.${g.gameCommandSender}.${g.sendAttack}(sliderValue, target);
                     return true;
                 }
                 return false;
@@ -266,8 +324,8 @@ function applyPatches(/** @type {ModUtils} */ { replace, replaceOne, replaceRawC
             __fx.openingAutomation.cancelPlayerAttack=(target)=> {
                 if (${dict.game}.${dict.gIsReplay}) return false;
                 if (target < 0 || target >= ${dict.game}.${dict.gLobbyMaxJoin}) return false;
-                if (typeof bB !== "undefined" && bB.hs && typeof bB.hs.q1 === "function") {
-                    bB.hs.q1(target);
+                if (typeof ${g.protocolHandler} !== "undefined" && ${g.protocolHandler}.${g.gameCommandSender} && typeof ${g.protocolHandler}.${g.gameCommandSender}.${g.cancelAttack} === "function") {
+                    ${g.protocolHandler}.${g.gameCommandSender}.${g.cancelAttack}(target);
                     return true;
                 }
                 return false;
@@ -275,8 +333,8 @@ function applyPatches(/** @type {ModUtils} */ { replace, replaceOne, replaceRawC
             __fx.openingAutomation.cancelFreeLandAttack=()=> {
                 if (${dict.game}.${dict.gIsReplay}) return false;
                 var freeLandTarget = ${dict.game}.${dict.gLobbyMaxJoin} || 512;
-                if (typeof bB !== "undefined" && bB.hs && typeof bB.hs.q1 === "function") {
-                    bB.hs.q1(freeLandTarget);
+                if (typeof ${g.protocolHandler} !== "undefined" && ${g.protocolHandler}.${g.gameCommandSender} && typeof ${g.protocolHandler}.${g.gameCommandSender}.${g.cancelAttack} === "function") {
+                    ${g.protocolHandler}.${g.gameCommandSender}.${g.cancelAttack}(freeLandTarget);
                     return true;
                 }
                 return false;
@@ -907,7 +965,7 @@ function applyPatches(/** @type {ModUtils} */ { replace, replaceOne, replaceRawC
     }
 
     // Set the default font to Trebuchet MS
-    replace(/sans-serif"/g, 'Trebuchet MS"');
+    replaceOrWarn("default font", /sans-serif"/g, 'Trebuchet MS"');
 
     // Track donations
     replaceOne(/(this\.\w+=function\((\w+),(\w+)\)\{)(\2===\w+\.\w+&&\(\w+\.\w+\((\w+\.\w+)\[0\],\5\[1\],\3\),this\.(\w+)\[12\]\+=\5\[1\],this\.\6\[16\]\+=\5\[0\]\),\3===\w+\.\w+&&\()/g,
@@ -919,12 +977,18 @@ function applyPatches(/** @type {ModUtils} */ { replace, replaceOne, replaceRawC
     replaceRawCode(",fontSize=+dz*Math.min(f0,.37);", ",fontSize=(__fx.settings.detailedTeamPercentage ? 0.75 : 1)*dz*Math.min(f0,.37);")
 
     // Draw Omen background image on menu screen
-    replace(
-        /vx\.imageSmoothingEnabled=false;var \w+=ac\.\w+\("territorial\.io"\);/g,
-        `if(typeof __fx!=="undefined"&&__fx.omenDrawMenuBg)__fx.omenDrawMenuBg(vx);$&`
+    // Draw the Omen menu background right after MenuManager.draw hands the screen to its
+    // background pass, so it sits under the menu widgets. Anchored on the minified shape
+    // `<ctx>.imageSmoothingEnabled=!0,this.<drawBackground>(),` -- replaceOne, so a game update
+    // that moves it fails the build instead of quietly dropping the branding.
+    // Only when no map raster is on screen: that background pass either fills the screen with a
+    // flat colour (nothing to preserve, so our image goes there) or blits the map -- which is the
+    // lobby's map preview, and must stay visible.
+    replaceOne(/(\w+)(\.imageSmoothingEnabled=!0,this\.\w+\(\),)/g,
+        `$1$2(typeof __fx!=="undefined"&&__fx.omenDrawMenuBg&&!${dict.mapHolder}.${g.mapIsRendered}&&__fx.omenDrawMenuBg($1)),`
     );
 
     console.log('Removing ads...');
     // Remove ads
-    replace('//api.adinplay.com/libs/aiptag/pub/TRT/territorial.io/tag.min.js', '');
+    replaceOrWarn("ad script removal", '//api.adinplay.com/libs/aiptag/pub/TRT/territorial.io/tag.min.js', '');
 }

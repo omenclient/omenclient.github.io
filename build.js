@@ -139,30 +139,6 @@ async function patchGameCode() {
 		matchDictionaryExpression(expression);
 	});
 
-	// Ensure all required dictionary mappings exist for version 25 bundle
-	dictionary.game = dictionary.game || "aE";
-	dictionary.playerId = dictionary.playerId || "fC";
-	dictionary.gHumans = dictionary.gHumans || "kn";
-	dictionary.gLobbyMaxJoin = dictionary.gLobbyMaxJoin || "fP";
-	dictionary.gMaxPlayers = dictionary.gMaxPlayers || "fP";
-	dictionary.gameState = dictionary.gameState || "dz";
-	dictionary.playerData = dictionary.playerData || "ah";
-	dictionary.rawPlayerNames = dictionary.rawPlayerNames || "a24";
-	dictionary.playerBalances = dictionary.playerBalances || "hU";
-	dictionary.playerTerritories = dictionary.playerTerritories || "hG";
-	dictionary.gIsSingleplayer = dictionary.gIsSingleplayer || "l7";
-	dictionary.gIsReplay = dictionary.gIsReplay || "hb";
-	dictionary.gIsTeamGame = dictionary.gIsTeamGame || "iM";
-	dictionary.gGameType = dictionary.gGameType || "l5";
-	dictionary.uiSizes = dictionary.uiSizes || "bf";
-	dictionary.gap = dictionary.gap || "gap";
-	dictionary.MenuManager = dictionary.MenuManager || "ab";
-	dictionary.getState = dictionary.getState || "a2Y";
-	dictionary.sidebar = dictionary.sidebar || "aX";
-	dictionary.getTime = dictionary.getTime || "a6Q";
-	dictionary.gSelectableSpawn = dictionary.gSelectableSpawn || "hq";
-	dictionary.uiHidden = dictionary.uiHidden || "nr";
-
 	modUtils.executePostMinifyHandlers();
 	script = modUtils.script;
 

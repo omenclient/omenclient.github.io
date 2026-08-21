@@ -54,21 +54,21 @@ function hashInt(n) {
     return (n ^ (n >>> 16)) >>> 0;
 }
 
-let cachedTeams = null;
-let cachedTeamsKey = null;
+let cachedEntries = null;
+let cachedEntriesKey = null;
 let cachedIpColors = null;
 const assignedColorIndexes = new Map();
 
-function getIpColors(teams, ipField) {
-    const key = ipField + "|" + teams.map(team => team.length).join(",");
-    if (cachedTeams === teams && cachedTeamsKey === key) return cachedIpColors;
+function getIpColors(entries, ipField) {
+    const key = ipField + "|" + entries.length;
+    if (cachedEntries === entries && cachedEntriesKey === key) return cachedIpColors;
 
     const counts = new Map();
-    teams.forEach(team => team.forEach(entry => {
+    entries.forEach(entry => {
         const ip = entry[ipField];
         if (ip === undefined) return;
         counts.set(ip, (counts.get(ip) || 0) + 1);
-    }));
+    });
 
     const paletteLength = duplicateIpColorPalette.length;
     const duplicates = [...counts.keys()].filter(ip => counts.get(ip) >= 2).sort();
@@ -91,16 +91,16 @@ function getIpColors(teams, ipField) {
     const colors = new Map();
     duplicates.forEach(ip => colors.set(ip, duplicateIpColorPalette[assignedColorIndexes.get(ip)]));
 
-    cachedTeams = teams;
-    cachedTeamsKey = key;
+    cachedEntries = entries;
+    cachedEntriesKey = key;
     cachedIpColors = colors;
     return colors;
 }
 
-function getDuplicateIpHighlightColor(player, teams, ipField) {
+function getDuplicateIpHighlightColor(player, entries, ipField) {
     const ip = player[ipField];
     if (ip === undefined) return null;
-    return getIpColors(teams, ipField).get(ip) || null;
+    return getIpColors(entries, ipField).get(ip) || null;
 }
 
 export default { getMaxTroops, getDensity, isPointInRectangle, fillTextMultiline, textStyleBasedOnDensity, getDuplicateIpHighlightColor }
