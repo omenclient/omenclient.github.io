@@ -243,6 +243,60 @@ function applyPatches(/** @type {ModUtils} */ modUtils) {
                 }
                 return bestId;
             };
+            __fx.openingAutomation.findV20ReserveBotAttackTarget=(tick, attackPercent)=> {
+                var player = ${dict.game}.${dict.playerId};
+                var borderTiles = ${dict.playerData}.${g.playerTiles}?.[player];
+                if (!borderTiles || !borderTiles.length) return -1;
+                var offsets = __fxAd?.${g.neighborOffsets};
+                if (!offsets || typeof __fxAd.${g.isOwnedTile} !== "function" || typeof __fxAd.${g.getTileOwner} !== "function") return -1;
+                var humans = Number(${dict.game}.${dict.gHumans});
+                var maxPlayers = ${dict.game}.${dict.gLobbyMaxJoin} || 512;
+                if (!isFinite(humans) || humans < 1) return -1;
+                var ownTroops = ${dict.playerData}.${dict.playerBalances}[player] || 0;
+                var ownLand = ${dict.playerData}.${dict.playerTerritories}[player] || 0;
+                if (ownTroops <= 0 || ownLand <= 0) return -1;
+                var recentTargets = __fx.openingAutomation.autoAttackRecentTargets;
+                var activeTargets = __fx.openingAutomation.automatedBotAttacks;
+                var cycle = Math.floor(tick / 100);
+                var breakeven = { 9: 1.84, 10: 2.01, 11: 2.16, 12: 2.25, 13: 2.27, 14: 2.18, 15: 1.95, 16: 1.56, 17: 1.88 };
+                var maxCostPerLand = (breakeven[cycle] || 1.8) * 2.0;
+                if (ownTroops > ownLand * 70) maxCostPerLand = Math.max(maxCostPerLand, 6);
+                var minLand = Math.max(300, Math.floor(ownLand * 0.005));
+                var sendTroops = ownTroops * Math.max(0, Math.min(0.11, Number(attackPercent) || 0));
+                if (sendTroops < 200) return -1;
+                var seen = new Set();
+                var bestId = -1;
+                var bestScore = -1;
+                for (var i = borderTiles.length - 1; i >= 0; i--) {
+                    var tile = borderTiles[i];
+                    for (var d = 0; d < 4; d++) {
+                        var neighbor = tile + offsets[d];
+                        if (!__fxAd.${g.isOwnedTile}(neighbor)) continue;
+                        var id = __fxAd.${g.getTileOwner}(neighbor);
+                        if (id < humans || id >= maxPlayers || id === player || seen.has(id)) continue;
+                        seen.add(id);
+                        if (!__fxCanAttack(player, id) || !__fxBorders(id, player)) continue;
+                        if (activeTargets?.has(id)) continue;
+                        if (recentTargets?.has(id) && tick - recentTargets.get(id) < 20) continue;
+                        var land = ${dict.playerData}.${dict.playerTerritories}[id] || 0;
+                        if (land < minLand) continue;
+                        var troops = ${dict.playerData}.${dict.playerBalances}[id] || 0;
+                        var density = troops / Math.max(1, land);
+                        var costPerLand = 2 * (1 + 1.6 * density);
+                        if (!isFinite(costPerLand) || costPerLand > maxCostPerLand) continue;
+                        var killCost = costPerLand * land / (253 / 256);
+                        var expectedLand = Math.min(sendTroops, killCost) / Math.max(2, costPerLand);
+                        var completionRatio = Math.min(1, sendTroops / Math.max(1, killCost));
+                        var efficiencyMultiplier = Math.pow(2 / Math.max(2, costPerLand), 0.70);
+                        var score = expectedLand * efficiencyMultiplier * (0.70 + completionRatio * 0.30);
+                        if (score > bestScore) {
+                            bestId = id;
+                            bestScore = score;
+                        }
+                    }
+                }
+                return bestId;
+            };
             __fx.openingAutomation.getDeployedTroops=()=> {
                 var player = ${dict.game}.${dict.playerId};
                 if (typeof ${g.attackManager} !== "undefined" && typeof ${g.attackManager}.${g.getAvailableAttackCount} === "function") {
@@ -305,8 +359,13 @@ function applyPatches(/** @type {ModUtils} */ modUtils) {
             var __fxTileNeutral = (tile)=> false;
             __fx.openingAutomation.attackPlayer=(target)=> {
                 if (${dict.game}.${dict.gIsReplay}) return false;
+                var humans = Number(${dict.game}.${dict.gHumans});
                 var maxPlayers = ${dict.game}.${dict.gLobbyMaxJoin} || 512;
-                if (target < 0 || target >= maxPlayers) return false;
+                // Automated attacks are bot-only. Fail closed if the human/bot boundary
+                // is unavailable, and re-check here so no selector can accidentally send
+                // an attack against another player.
+                if (!isFinite(humans) || humans < 1) return false;
+                if (target < humans || target >= maxPlayers) return false;
                 var targetLand = ${dict.playerData}.${dict.playerTerritories}[target];
                 if (!targetLand || targetLand <= 0) return false;
                 if (!__fxCanAttack(${dict.game}.${dict.playerId}, target)) return false;
@@ -719,11 +778,13 @@ function applyPatches(/** @type {ModUtils} */ modUtils) {
             };
             __fx.openingAutomation.findSimpleBestBotAttackTarget=(tick)=> {
                 var playerId = ${dict.game}.${dict.playerId};
+                var humans = Number(${dict.game}.${dict.gHumans});
                 var maxPlayers = ${dict.game}.${dict.gLobbyMaxJoin} || 512;
+                if (!isFinite(humans) || humans < 1) return -1;
                 var recentTargets = __fx.openingAutomation.autoAttackRecentTargets;
                 var best = -1;
                 var bestScore = -1;
-                for (var id = 0; id < maxPlayers; id++) {
+                for (var id = humans; id < maxPlayers; id++) {
                     if (id === playerId) continue;
                     var land = ${dict.playerData}.${dict.playerTerritories}[id];
                     if (!land || land <= 0) continue;
@@ -739,7 +800,7 @@ function applyPatches(/** @type {ModUtils} */ modUtils) {
                     }
                 }
                 if (best >= 0) return best;
-                for (var fallbackId = 0; fallbackId < maxPlayers; fallbackId++) {
+                for (var fallbackId = humans; fallbackId < maxPlayers; fallbackId++) {
                     if (fallbackId === playerId) continue;
                     var fallbackLand = ${dict.playerData}.${dict.playerTerritories}[fallbackId];
                     if (!fallbackLand || fallbackLand <= 0) continue;

@@ -1,11 +1,14 @@
-import { getSettings, persistSettings } from "./settings.js";
+import { getSettings } from "./settings.js";
 import { getVar } from "./gameInterface.js";
-import {
-  attacksPerCycleToIntervalMs,
-  intervalMsToAttacksPerCycle
-} from "./botAttackRate.js";
+import { attacksPerCycleToIntervalMs, intervalMsToAttacksPerCycle } from "./botAttackRate.js";
 
 const PANEL_POSITION_STORAGE_KEY = "fx_automation_controls_position";
+const BOT_MODE_SEQUENCE = ["off", "v20reserve", "best"];
+
+function nextBotMode(currentMode) {
+  const index = BOT_MODE_SEQUENCE.indexOf(currentMode);
+  return BOT_MODE_SEQUENCE[(index + 1) % BOT_MODE_SEQUENCE.length];
+}
 
 function makeButton(label, onClick) {
   const button = document.createElement("button");
@@ -46,8 +49,11 @@ export default function initAutomationControls() {
     render();
   });
   const botButton = makeButton("Bot", () => {
-    window.__fx.openingAutomation.toggleAutoAttackMode("best");
+    window.__fx.openingAutomation.setAutoAttackMode(nextBotMode(window.__fx.openingAutomation.getAutoAttackMode()));
     render();
+  });
+  const logButton = makeButton("Log", () => {
+    window.__fx.openingAutomation.downloadBotAttackTelemetry("csv");
   });
   const onButton = makeButton("All On", () => {
     window.__fx.openingAutomation.setAllAutomationEnabled(true);
@@ -55,28 +61,47 @@ export default function initAutomationControls() {
   });
   onButton.className = "all-toggle";
 
+  const botSpendLabel = document.createElement("label");
+  botSpendLabel.className = "bot-rate-control";
+  const botSpendHeader = document.createElement("span");
+  botSpendHeader.className = "bot-rate-label";
+  botSpendHeader.textContent = "Bot send";
+  const botSpendText = document.createElement("span");
+  botSpendText.className = "bot-rate-value";
+  const spendSlider = document.createElement("input");
+  spendSlider.type = "range";
+  spendSlider.min = "0";
+  spendSlider.max = "100";
+  spendSlider.step = "5";
+  spendSlider.value = String(window.__fx.openingAutomation.getBotSpendPercent());
+  spendSlider.addEventListener("input", () => {
+    const spendPercent = Number(spendSlider.value);
+    window.__fx.openingAutomation.setBotSpendPercent(spendPercent);
+    botSpendText.textContent = `${spendPercent}%`;
+  });
+  botSpendLabel.append(botSpendHeader, spendSlider, botSpendText);
+
   const botRateLabel = document.createElement("label");
   botRateLabel.className = "bot-rate-control";
   const botRateHeader = document.createElement("span");
   botRateHeader.className = "bot-rate-label";
-  botRateHeader.textContent = "Bot/cycle";
+  botRateHeader.textContent = "Bot rate";
   const botRateText = document.createElement("span");
   botRateText.className = "bot-rate-value";
-  const intervalSlider = document.createElement("input");
-  intervalSlider.type = "range";
-  intervalSlider.min = "0";
-  intervalSlider.max = "20";
-  intervalSlider.step = "1";
-  intervalSlider.value = String(intervalMsToAttacksPerCycle(window.__fx.openingAutomation.getBestAttackIntervalMs()));
-  intervalSlider.addEventListener("input", () => {
-    const attacksPerCycle = Number(intervalSlider.value);
+  const rateSlider = document.createElement("input");
+  rateSlider.type = "range";
+  rateSlider.min = "0";
+  rateSlider.max = "20";
+  rateSlider.step = "1";
+  rateSlider.addEventListener("input", () => {
+    const attacksPerCycle = Number(rateSlider.value);
     window.__fx.openingAutomation.setBestAttackIntervalMs(attacksPerCycleToIntervalMs(attacksPerCycle));
-    botRateText.textContent = String(attacksPerCycle);
+    botRateText.textContent = `${attacksPerCycle}/cy`;
   });
-  botRateLabel.append(botRateHeader, intervalSlider, botRateText);
+  botRateLabel.append(botRateHeader, rateSlider, botRateText);
 
-  buttonGrid.append(openingButton, infiniteButton, botButton, offButton, onButton);
-  container.append(dragHandle, buttonGrid, botRateLabel);
+  buttonGrid.append(openingButton, infiniteButton, botButton, logButton, offButton, onButton);
+  container.append(dragHandle, buttonGrid, botSpendLabel, botRateLabel);
 
   function loadPanelPosition() {
     try {
@@ -176,16 +201,21 @@ export default function initAutomationControls() {
   function render() {
     attach();
     container.classList.toggle("in-game", isInGame());
-    settings.autoAttackLowDensityBots = settings.autoAttackLowDensityBotsMode !== "off";
+    const botMode = window.__fx.openingAutomation.getAutoAttackMode();
+    const botEnabled = botMode !== "off";
+    botButton.textContent = botMode === "v20reserve" ? "Bot V20" : botMode === "best" ? "Bot Land" : "Bot Off";
+    botButton.title = "Cycles bot route: Off → V20 reserve → Land max";
     setActive(openingButton, settings.openingAutomationEnabled);
     setActive(infiniteButton, settings.infiniteExpansionEnabled);
-    setActive(botButton, settings.autoAttackLowDensityBots);
-    setActive(onButton, settings.openingAutomationEnabled && settings.infiniteExpansionEnabled && settings.autoAttackLowDensityBots);
-    setActive(offButton, !settings.openingAutomationEnabled && !settings.infiniteExpansionEnabled && !settings.autoAttackLowDensityBots);
+    setActive(botButton, botEnabled);
+    setActive(onButton, settings.openingAutomationEnabled && settings.infiniteExpansionEnabled && botEnabled);
+    setActive(offButton, !settings.openingAutomationEnabled && !settings.infiniteExpansionEnabled && !botEnabled);
+    const spendPercent = window.__fx.openingAutomation.getBotSpendPercent();
+    spendSlider.value = String(spendPercent);
+    botSpendText.textContent = `${spendPercent}%`;
     const attacksPerCycle = intervalMsToAttacksPerCycle(window.__fx.openingAutomation.getBestAttackIntervalMs());
-    intervalSlider.value = String(attacksPerCycle);
-    botRateText.textContent = String(attacksPerCycle);
-    persistSettings();
+    rateSlider.value = String(attacksPerCycle);
+    botRateText.textContent = `${attacksPerCycle}/cy`;
   }
 
   window.addEventListener("load", () => {

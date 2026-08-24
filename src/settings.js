@@ -8,10 +8,6 @@ import { LobbyReminderRulesInput } from './lobbyReminderRulesInput.js';
 import { FollowedAccountNicknames } from './followedAccounts.js';
 import DEFAULT_OPENING_STRATEGY from "./defaultOpeningStrategy.js";
 import {
-  attacksPerCycleToIntervalMs,
-  intervalMsToAttacksPerCycle
-} from "./botAttackRate.js";
-import {
   OFFSET_UNIT_VERSION,
   migrateOpeningTickOffset,
   shouldMigrateOpeningTickOffset
@@ -62,11 +58,27 @@ var settings = {
   openingAutomationStrategy: "",
   infiniteExpansionEnabled: true,
   autoAttackLowDensityBots: true,
-  autoAttackLowDensityBotsMode: "best",
+  autoAttackLowDensityBotsMode: "v20reserve",
   autoAttackLowDensityBotsStartCycle: "8.93",
-  botAttackIntervalMs: "560"
+  botAttackIntervalMs: "560",
+  botSpendPercent: "100"
 };
 __fx.settings = settings;
+const BOT_ROUTE_MODES = new Set(["off", "best", "v20reserve"]);
+function defaultBotRouteForEnabled(enabled) {
+  return enabled ? "v20reserve" : "off";
+}
+function normalizeBotRouteSettings(target, { preferCheckbox = false } = {}) {
+  const checkboxEnabled = Boolean(target.autoAttackLowDensityBots);
+  let mode = String(target.autoAttackLowDensityBotsMode || "");
+  if (!BOT_ROUTE_MODES.has(mode)) mode = defaultBotRouteForEnabled(checkboxEnabled);
+  if (preferCheckbox) {
+    if (!checkboxEnabled) mode = "off";
+    else if (mode === "off") mode = "v20reserve";
+  }
+  target.autoAttackLowDensityBotsMode = mode;
+  target.autoAttackLowDensityBots = mode !== "off";
+}
 const discontinuedSettings = ["hideAllLinks", "fontName"];
 __fx.makeMainMenuTransparent = false;
 
@@ -565,13 +577,24 @@ const settingsManager = new (function () {
       label: "Run bot attack phase"
     },
     {
-      for: "botAttacksPerCycle",
+      for: "autoAttackLowDensityBotsMode",
+      type: "selectMenu",
+      label: "Bot route:",
+      tooltip: "V20 Reserve is the multiplayer-density route; Land Max keeps the older greedy bot phase.",
+      options: [
+        { value: "off", label: "Off" },
+        { value: "v20reserve", label: "V20 Reserve" },
+        { value: "best", label: "Land Max" }
+      ]
+    },
+    {
+      for: "botSpendPercent",
       type: "numberInput",
-      label: "Bot attack per cycle:",
-      tooltip: "How many timed best-bot attacks to attempt per 5.6 second cycle. Range: 0 to 20.",
+      label: "Bot spend aggression:",
+      tooltip: "Live bot-phase troop spending. 100 maximizes land; 0 stops new bot attacks and saves income.",
       min: "0",
-      max: "20",
-      step: "1"
+      max: "100",
+      step: "5"
     },
     OpeningAutomationInput,
     SectionHeader("Lobby game reminders"),
@@ -653,18 +676,25 @@ const settingsManager = new (function () {
     } else label.append(document.createElement("br"));
     settingsContainer.append(label, document.createElement("br"));
   });
+  if (checkboxFields.autoAttackLowDensityBots && inputFields.autoAttackLowDensityBotsMode) {
+    const botPhaseCheckbox = checkboxFields.autoAttackLowDensityBots;
+    const botRouteSelect = inputFields.autoAttackLowDensityBotsMode;
+    botPhaseCheckbox.addEventListener("change", function () {
+      if (botPhaseCheckbox.checked && botRouteSelect.value === "off") botRouteSelect.value = "v20reserve";
+      if (!botPhaseCheckbox.checked) botRouteSelect.value = "off";
+    });
+    botRouteSelect.addEventListener("change", function () {
+      botPhaseCheckbox.checked = botRouteSelect.value !== "off";
+    });
+  }
   this.save = function () {
     Object.keys(inputFields).forEach(function (key) {
-      if (key === "botAttacksPerCycle") {
-        settings.botAttackIntervalMs = String(attacksPerCycleToIntervalMs(inputFields[key].value));
-        return;
-      }
       settings[key] = inputFields[key].value.trim();
     });
     Object.keys(checkboxFields).forEach(function (key) {
       settings[key] = checkboxFields[key].checked;
     });
-    settings.autoAttackLowDensityBotsMode = settings.autoAttackLowDensityBots ? "best" : "off";
+    normalizeBotRouteSettings(settings, { preferCheckbox: true });
     customElements.forEach((element) => element.save?.(settings));
     this.applySettings();
     WindowManager.closeWindow("settings");
@@ -718,10 +748,6 @@ const settingsManager = new (function () {
 
   this.syncFields = function () {
     Object.keys(inputFields).forEach(function (key) {
-      if (key === "botAttacksPerCycle") {
-        inputFields[key].value = String(intervalMsToAttacksPerCycle(settings.botAttackIntervalMs));
-        return;
-      }
       inputFields[key].value = settings[key] ?? "";
     });
     Object.keys(checkboxFields).forEach(function (key) {
@@ -797,14 +823,17 @@ if (localStorage.getItem("fx_settings") !== null) {
     settings.openingAutomationTickOffsetUnit = savedSettings.openingAutomationTickOffsetUnit;
     migrateOpeningTickOffset(settings);
   }
-  if (!["off", "best"].includes(settings.autoAttackLowDensityBotsMode)) {
-    settings.autoAttackLowDensityBotsMode = settings.autoAttackLowDensityBots ? "best" : "off";
+  const savedHasBotRouteMode = Object.prototype.hasOwnProperty.call(savedSettings, "autoAttackLowDensityBotsMode");
+  if (!savedHasBotRouteMode || !BOT_ROUTE_MODES.has(settings.autoAttackLowDensityBotsMode)) {
+    settings.autoAttackLowDensityBotsMode = defaultBotRouteForEnabled(settings.autoAttackLowDensityBots);
   }
-  settings.autoAttackLowDensityBots = settings.autoAttackLowDensityBotsMode !== "off";
+  normalizeBotRouteSettings(settings);
   const botAttackInterval = Number(settings.botAttackIntervalMs || 400);
   settings.botAttackIntervalMs = botAttackInterval <= 0
     ? "0"
     : String(Math.min(5600, Math.max(100, botAttackInterval)));
+  const botSpendPercent = Number(settings.botSpendPercent ?? 100);
+  settings.botSpendPercent = String(Math.min(100, Math.max(0, Number.isFinite(botSpendPercent) ? botSpendPercent : 100)));
 }
 
 // migrate old emoji settings to new

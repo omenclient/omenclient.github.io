@@ -18,8 +18,18 @@ const KEY_RATIOS = {
     a: 31 / 32
 };
 
-const AUTO_ATTACK_MODES = new Set(["off", "best"]);
+const AUTO_ATTACK_MODES = new Set(["off", "best", "v20reserve"]);
 const BOT_ATTACK_TELEMETRY_STORAGE_KEY = "fx_bot_attack_telemetry";
+
+function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+}
+
+function getV20ReserveRatioForTick(tick) {
+    if (tick >= 1550) return 0.60;
+    if (tick >= 1300) return 0.40;
+    return 0.55;
+}
 
 function normalizeAutoAttackMode(settings) {
     settings = settings || getSettings?.() || {};
@@ -106,6 +116,7 @@ const openingAutomation = new (function () {
     this.findThighClientBotAttackTarget = () => null;
     this.findSimpleBestBotAttackTarget = () => -1;
     this.findBorderBotAttackTarget = () => -1;
+    this.findV20ReserveBotAttackTarget = () => -1;
     this.findLowDensityBorderingBots = () => [];
     this.enabledForGame = false;
     this.completed = false;
@@ -464,6 +475,83 @@ const openingAutomation = new (function () {
         return Number(settings.botAttackIntervalMs);
     };
 
+    this.getBotSpendPercent = function () {
+        const value = Number(getSettings().botSpendPercent ?? 100);
+        return Math.min(100, Math.max(0, Number.isFinite(value) ? value : 100));
+    };
+
+    this.setBotSpendPercent = function (percent) {
+        const value = Math.min(100, Math.max(0, Number(percent) || 0));
+        getSettings().botSpendPercent = String(value);
+        persistSettings();
+        return value;
+    };
+
+    this.getBotAttackProfile = function (mode = this.getAutoAttackMode(), tick = this.lastTick) {
+        const aggression = this.getBotSpendPercent() / 100;
+        if (mode === "v20reserve") {
+            const baseReserve = getV20ReserveRatioForTick(Number(tick) || 0);
+            return {
+                mode,
+                aggression,
+                // 100% = tested V20 reserve route. Lower values raise the
+                // reserve and shrink each command without changing target logic.
+                reserveRatio: clamp(baseReserve + (1 - aggression) * 0.40, baseReserve, 0.95),
+                maxSendFrac: 0.11 * aggression,
+                minSendFrac: 0.055 * aggression
+            };
+        }
+        return {
+            mode: "best",
+            aggression,
+            // Legacy land-max mapping: 100% ~= land-max (0.03),
+            // 50% ~= balanced (0.60), and 0% stops new sends entirely.
+            reserveRatio: 1.17 - 1.14 * aggression,
+            maxSendFrac: 0.12,
+            minSendFrac: 0
+        };
+    };
+
+    this.getBotReserveRatio = function (mode = this.getAutoAttackMode(), tick = this.lastTick) {
+        return this.getBotAttackProfile(mode, tick).reserveRatio;
+    };
+
+    this.prepareBotSpendAttack = function (mode = this.getAutoAttackMode(), tick = this.lastTick) {
+        const spendPercent = this.getBotSpendPercent();
+        if (spendPercent <= 0) return 0;
+        const home = Number(this.getPlayerTroops?.() || 0);
+        const land = Number(this.getPlayerLand?.() || 0);
+        if (home <= 0 || land <= 0) return 0;
+        const profile = this.getBotAttackProfile(mode, tick);
+        if (profile.maxSendFrac <= 0) return 0;
+        const reserve = land * profile.reserveRatio;
+        const commandTax = Math.floor(home * 12 / 1024);
+        const maxSend = Math.max(0, home - reserve - commandTax);
+        const sendFloor = Math.min(maxSend, home * profile.minSendFrac);
+        const sendCeiling = Math.min(maxSend, home * profile.maxSendFrac);
+        const plannedSend = Math.max(sendFloor, sendCeiling);
+        const maxPercent = plannedSend / home;
+        if (maxPercent < 2 / 1024) return 0;
+        const attackPercent = Math.min(profile.maxSendFrac, maxPercent);
+        if (attackPercent < 2 / 1024) return 0;
+        window.__fx.keybindFunctions.setAbsolute(attackPercent);
+        window.__fx.keybindFunctions.repaintAttackPercentageBar();
+        this.lastPreparedBotAttack = {
+            mode,
+            tick,
+            spendPercent,
+            reserveRatio: profile.reserveRatio,
+            maxSendFrac: profile.maxSendFrac,
+            minSendFrac: profile.minSendFrac,
+            reserve,
+            commandTax,
+            maxSend,
+            plannedSend,
+            attackPercent
+        };
+        return attackPercent;
+    };
+
     this.isInfiniteExpansionEnabled = function () {
         this.infiniteExpansionEnabled = isInfiniteExpansionConfigured();
         return this.infiniteExpansionEnabled;
@@ -498,7 +586,7 @@ const openingAutomation = new (function () {
         const nextEnabled = Boolean(enabled);
         settings.openingAutomationEnabled = nextEnabled;
         settings.infiniteExpansionEnabled = nextEnabled;
-        settings.autoAttackLowDensityBotsMode = nextEnabled ? "best" : "off";
+        settings.autoAttackLowDensityBotsMode = nextEnabled ? "v20reserve" : "off";
         settings.autoAttackLowDensityBots = nextEnabled;
         persistSettings();
         if (!nextEnabled) {
@@ -507,7 +595,7 @@ const openingAutomation = new (function () {
             this.setAutoAttackMode("off");
         } else {
             this.setInfiniteExpansionEnabled(true);
-            this.setAutoAttackMode("best");
+            this.setAutoAttackMode("v20reserve");
             if ((!this.enabledForGame || this.completed) && this.lastTick >= 0 && this.lastTick < 20) this.start();
         }
         return nextEnabled;
@@ -738,7 +826,10 @@ const openingAutomation = new (function () {
                 // pending-adjusted homeTroops), so estimate the commitment against that same
                 // raw figure to keep the pending ledger in sync with what actually got spent.
                 const sentAmount = Math.round(decision.percent * homeTroopsRaw);
-                this.infiniteExpansionPendingSends.push({ tick, amount: sentAmount });
+                this.infiniteExpansionPendingSends.push({
+                    tick,
+                    amount: sentAmount
+                });
                 this.infiniteExpansionLateTroopsSent += sentAmount;
                 this.infiniteExpansionLastPercent = decision.percent;
             }
@@ -837,7 +928,7 @@ const openingAutomation = new (function () {
             return;
         }
 
-        if (mode === "best") {
+        if (mode === "best" || mode === "v20reserve") {
             // Tick-based cadence ported from ThighClient MPV3's runRawBotAttacks (fires every 10
             // ticks = 10x/100-tick cycle there). Tied to the game's own tick counter instead of
             // performance.now(), so it can't drift under lag and doesn't depend on the 5.6s/cycle
@@ -846,6 +937,12 @@ const openingAutomation = new (function () {
             if (attacksPerCycle <= 0) return;
             const tickInterval = Math.max(1, Math.round(100 / attacksPerCycle));
             if (tick - this.autoAttackLastTick < tickInterval) return;
+            // Live V3-style spend control. A land-indexed floor is preserved on
+            // every bot command, so repeated attacks cannot ratchet home to zero.
+            // Opening and infinite-expansion sends do not use this control.
+            const attackPercent = this.prepareBotSpendAttack(mode, tick);
+            if (attackPercent <= 0) return;
+            if (mode === "v20reserve") this.cancelBadAutomatedBotAttacks(tick);
 
             // Border-adjacent target first: ThighClient's live bot-phase logic only ever attacks
             // bots actually touching the player's territory (walked from real border tiles), so
@@ -853,8 +950,10 @@ const openingAutomation = new (function () {
             // check at all -- it can pick a bot the player doesn't border, which the game silently
             // no-ops, burning a cycle's attack for nothing. Falls back to the old full-scan only if
             // no bordering low-density bot is found, so this can't regress to doing nothing.
-            let target = this.findBorderBotAttackTarget();
-            let kind = "border-adjacent";
+            let target = mode === "v20reserve"
+                ? this.findV20ReserveBotAttackTarget(tick, attackPercent)
+                : this.findBorderBotAttackTarget();
+            let kind = mode === "v20reserve" ? "v20-reserve" : "border-adjacent";
             if (target < 0) {
                 target = this.findSimpleBestBotAttackTarget(tick);
                 kind = "simple-best-interval";
@@ -872,8 +971,10 @@ const openingAutomation = new (function () {
                 mode,
                 kind,
                 autoAttackCount: this.autoAttackCount,
-                cycleProgress: tickInCycle / 100
+                cycleProgress: tickInCycle / 100,
+                botSpendProfile: this.lastPreparedBotAttack || null
             });
+            this.trackAutomatedBotAttack(target, attackSnapshot);
             this.scheduleBotAttackOutcomeCheck(attackEvent, target);
             this.autoAttackRecentTargets.set(target, tick);
             this.autoAttackLastTick = tick;
