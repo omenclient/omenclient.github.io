@@ -1243,7 +1243,7 @@ export function OpeningAutomationInput(containerElement) {
 
     this.update = function (newSettings) {
         offsetInput.value = newSettings.openingAutomationTickOffset || "-9.5";
-        textarea.value = newSettings.openingAutomationStrategy || JSON.stringify(DEFAULT_STRATEGY, null, 2);
+        textarea.value = newSettings.openingAutomationStrategy || JSON.stringify(cachedDefaultStrategy || EMPTY_STRATEGY_FALLBACK, null, 2);
     };
 }
 
