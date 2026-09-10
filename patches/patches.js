@@ -695,6 +695,164 @@ function applyPatches(/** @type {ModUtils} */ modUtils) {
                 }
                 return best || fallbackBest;
             };
+            // Reachability-gated targeting, ported from genuine Project Messiah's micro()
+            // (ThighClient/ProjectMessiah/MessiahCode.js 481-630, via
+            // MessiahLatestPort/patches/messiah-ai.js + reachability.js's updateArrayToPoint).
+            // What's kept vs. dropped from the original, and why:
+            //  - KEPT: the BFS flood-fill reachability estimate itself -- a pure geometry
+            //    calculation over MY tiles vs. a target's owned tiles, no opponent-internal state
+            //    needed, so it is exactly as valid against a real (server-controlled) multiplayer
+            //    bot as against a singleplayer one.
+            //  - ADAPTED: the original enumerates the target's full owned-tile list
+            //    (getAllTilesOf / cheat.getAllPixelsCoordinates) and floods into that fixed set.
+            //    No binding for a per-player FULL tile list exists in this build (playerTiles/g.h7
+            //    is BORDER tiles only -- see the comment on that binding above; the OmenClient
+            //    predecessor's old gp/go full-tile names no longer resolve). Reimplemented as
+            //    an ownership-checked flood fill instead (estimateBotReachableLand below): walk
+            //    outward from tiles I border the target on, testing isOwnedTile+getTileOwner on
+            //    each neighbor, stopping once landTotal (already known from playerTerritories,
+            //    no enumeration needed) tiles are reached or the frontier stagnates twice running.
+            //    Same terminating conditions as updateArrayToPoint, same reason (a target region
+            //    split by water/third-party land is genuinely unreachable further, not slow).
+            //  - DROPPED: botTiming/pending-attack-based delayed-attack scheduling. Both read the
+            //    TARGET bot's own internal AI/attack state, which only exists client-side because
+            //    Messiah's original engine ran singleplayer bots IN the client. In this engine's
+            //    real multiplayer games (what this route is for), bot logic runs server-side and
+            //    that state is not exposed to the client at all -- porting it would either no-op
+            //    or read garbage. The existing autoAttackRecentTargets/automatedBotAttacks cooldown
+            //    tracking (shared with every other mode here) already serves the same
+            //    don't-re-target-what-I-just-attacked purpose.
+            //  - REPLACED dosing: the original doses off a flat 2.7-2.8x reachableLand constant
+            //    tuned for an older game version's defense math and ignores the target's own troop
+            //    count entirely. This build's own oneShotRequired formula
+            //    (2*(land+troops)/(253/256)) already bakes in the CURRENT engine's actual
+            //    defense/attack-tax constant and the target's real garrison size -- strictly more
+            //    accurate for this engine version than reproducing Messiah's older constant. Reused
+            //    here with reachableLand/reachableTroops (both scaled by reachRatio) substituted for
+            //    the target's full land/troops, which is the actual novel piece: dosing off what's
+            //    reachable, not what's nominal.
+            __fx.openingAutomation.estimateBotReachableLand=(entryTiles, botId, landTotal, budgetRounds)=> {
+                if (!entryTiles || !entryTiles.length || landTotal <= 0) return { reachable: 0, rounds: 0, complete: false };
+                var offsets = __fxAd?.${g.neighborOffsets};
+                if (!offsets) return { reachable: landTotal, rounds: 0, complete: true };
+                var reached = new Set();
+                var frontier = entryTiles;
+                var rounds = 0, stagnant = 0, budgetSnapshot;
+                var MAX_ROUNDS = 300;
+                while (reached.size < landTotal && rounds < MAX_ROUNDS) {
+                    var toAdd = new Set();
+                    for (var fi = 0; fi < frontier.length; fi++) {
+                        var tile = frontier[fi];
+                        for (var d = 0; d < 4; d++) {
+                            var neighbor = tile + offsets[d];
+                            if (reached.has(neighbor)) continue;
+                            if (!__fxAd.${g.isOwnedTile}(neighbor)) continue;
+                            if (__fxAd.${g.getTileOwner}(neighbor) !== botId) continue;
+                            toAdd.add(neighbor);
+                        }
+                    }
+                    if (toAdd.size === 0) {
+                        stagnant++;
+                        if (stagnant >= 2) break;
+                    } else {
+                        stagnant = 0;
+                    }
+                    toAdd.forEach((t)=> reached.add(t));
+                    frontier = Array.from(toAdd);
+                    rounds++;
+                    if (rounds === budgetRounds) budgetSnapshot = reached.size;
+                }
+                return {
+                    reachable: budgetSnapshot !== undefined ? budgetSnapshot : reached.size,
+                    rounds: rounds,
+                    complete: reached.size >= landTotal
+                };
+            };
+            __fx.openingAutomation.findMessiahBotAttackTarget=(tick)=> {
+                var player = ${dict.game}.${dict.playerId};
+                var borderTiles = ${dict.playerData}.${g.playerTiles}?.[player];
+                if (!borderTiles || !borderTiles.length) return null;
+                var offsets = __fxAd?.${g.neighborOffsets};
+                if (!offsets || typeof __fxAd.${g.isOwnedTile} !== "function" || typeof __fxAd.${g.getTileOwner} !== "function") return null;
+                var humans = Number(${dict.game}.${dict.gHumans});
+                var maxPlayers = ${dict.game}.${dict.gLobbyMaxJoin} || 512;
+                if (!isFinite(humans) || humans < 1) return null;
+                var ownTroops = ${dict.playerData}.${dict.playerBalances}[player] || 0;
+                var ownLand = ${dict.playerData}.${dict.playerTerritories}[player] || 0;
+                if (ownTroops <= 0 || ownLand <= 0) return null;
+
+                // Group my own border tiles by which bot they touch -- mirrors Messiah's
+                // borderPixelsWithEntity ("my tiles adjacent to that bot"), deduped so a bot with
+                // several bordering tiles is scanned once, not once per tile.
+                var entriesByBot = new Map();
+                for (var i = borderTiles.length - 1; i >= 0; i--) {
+                    var tile = borderTiles[i];
+                    for (var d = 0; d < 4; d++) {
+                        var neighbor = tile + offsets[d];
+                        if (!__fxAd.${g.isOwnedTile}(neighbor)) continue;
+                        var owner = __fxAd.${g.getTileOwner}(neighbor);
+                        if (owner < humans || owner >= maxPlayers || owner === player) continue;
+                        var entries = entriesByBot.get(owner);
+                        if (!entries) { entries = []; entriesByBot.set(owner, entries); }
+                        if (entries.indexOf(tile) < 0) entries.push(tile);
+                    }
+                }
+                if (!entriesByBot.size) return null;
+
+                var recentTargets = __fx.openingAutomation.autoAttackRecentTargets;
+                var activeTargets = __fx.openingAutomation.automatedBotAttacks;
+                var maxAllowedDensity = 0.32;
+                var minLand = ownLand < 10000 ? 180 : ownLand < 30000 ? 260 : ownLand < 60000 ? 500 : 700;
+                var reserveRatio = 0.20;
+                var taxTroops = Math.floor(ownTroops * 12 / 1024);
+                var maxSendTroops = Math.max(0, ownTroops - ownTroops * reserveRatio - taxTroops);
+                if (maxSendTroops < 1) return null;
+                var BUDGET_ROUNDS = 10;
+
+                var best = null;
+                var bestScore = -1;
+                entriesByBot.forEach((entryTiles, id)=> {
+                    if (activeTargets?.has(id)) return;
+                    if (recentTargets?.has(id) && tick - recentTargets.get(id) < 20) return;
+                    var land = ${dict.playerData}.${dict.playerTerritories}[id] || 0;
+                    if (land < minLand) return;
+                    var troops = ${dict.playerData}.${dict.playerBalances}[id] || 0;
+                    var density = land > 0 ? troops / (land * 150) * 100 : Infinity;
+                    if (!isFinite(density) || density > maxAllowedDensity) return;
+
+                    var reach = __fx.openingAutomation.estimateBotReachableLand(entryTiles, id, land, BUDGET_ROUNDS);
+                    var reachableLand = Math.max(1, reach.reachable);
+                    var reachRatio = reachableLand / land;
+                    // Genuine Messiah gates on updatesNeeded[0] - updatesLeft (how badly a target
+                    // overshoots the cycle) to skip severely-out-of-reach targets. There is no
+                    // directly comparable tick budget here, but a low reachRatio after
+                    // BUDGET_ROUNDS is the same underlying signal: most of the bot's land sits
+                    // behind a choke point, or in a pocket this player's border doesn't actually
+                    // touch -- exactly the "attacking a bot that looks big but gives a worse
+                    // target" case this mode exists to avoid.
+                    if (reachRatio < 0.35) return;
+
+                    var reachableTroops = troops * reachRatio;
+                    var killCost = 2 * (reachableLand + reachableTroops) / (253 / 256);
+                    var desiredSend = killCost * 1.25;
+                    var plannedSend = Math.min(desiredSend, maxSendTroops);
+                    var oneShotRatio = plannedSend / Math.max(1, killCost);
+                    if (oneShotRatio < 0.95) return;
+
+                    var score = Math.pow(reachableLand, 1.1) * reachRatio / Math.sqrt(Math.max(density, 0.05));
+                    if (score > bestScore) {
+                        best = {
+                            target: id,
+                            percent: Math.max(0.02, Math.min(0.5, plannedSend / Math.max(1, ownTroops))),
+                            score: score,
+                            oneShotRatio: oneShotRatio,
+                            reachRatio: reachRatio
+                        };
+                        bestScore = score;
+                    }
+                });
+                return best;
+            };
             __fx.openingAutomation.findThighClientBotAttackTarget=(tick)=> {
                 __fx.openingAutomation.updateSafeBotDensityTracker();
                 var playerId = ${dict.game}.${dict.playerId};

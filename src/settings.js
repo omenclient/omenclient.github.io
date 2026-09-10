@@ -64,7 +64,7 @@ var settings = {
   botSpendPercent: "100"
 };
 __fx.settings = settings;
-const BOT_ROUTE_MODES = new Set(["off", "best", "v20reserve"]);
+const BOT_ROUTE_MODES = new Set(["off", "best", "v20reserve", "messiah"]);
 function defaultBotRouteForEnabled(enabled) {
   return enabled ? "v20reserve" : "off";
 }
@@ -580,11 +580,12 @@ const settingsManager = new (function () {
       for: "autoAttackLowDensityBotsMode",
       type: "selectMenu",
       label: "Bot route:",
-      tooltip: "V20 Reserve is the multiplayer-density route; Land Max keeps the older greedy bot phase.",
+      tooltip: "V20 Reserve is the multiplayer-density route; Land Max keeps the older greedy bot phase; Messiah targets by BFS-reachable land instead of nominal land.",
       options: [
         { value: "off", label: "Off" },
         { value: "v20reserve", label: "V20 Reserve" },
-        { value: "best", label: "Land Max" }
+        { value: "best", label: "Land Max" },
+        { value: "messiah", label: "Messiah" }
       ]
     },
     {

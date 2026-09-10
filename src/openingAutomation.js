@@ -5,9 +5,23 @@ import {
     getInfiniteExpansionMaxSendPercent,
     getDynamicInfiniteExpansionDecision
 } from "./infiniteExpansionStrategy.js";
-import DEFAULT_STRATEGY from "./defaultOpeningStrategy.js";
 import { openingTickOffsetToInternalTicks } from "./openingTickOffset.js";
 import { intervalMsToAttacksPerCycle } from "./botAttackRate.js";
+
+// Loaded via dynamic import() rather than a static import so the opening schedule can be
+// swapped by replacing this one file (or its build output) without rebuilding the whole
+// webpack bundle -- the same reason MessiahLatestPort's bindings.js dynamically imports its
+// AI module. Fired immediately at module evaluation, well before it's needed: readStrategy()
+// isn't called until the game's own tick loop starts (tick < 20 in onTick), which is always
+// milliseconds away at minimum -- ample time for a same-bundle chunk fetch to resolve. The
+// values themselves are unchanged from the previous static import (Gbv5 opening, byte-identical).
+let cachedDefaultStrategy = null;
+import("./defaultOpeningStrategy.js")
+    .then((mod) => { cachedDefaultStrategy = mod.default; })
+    .catch((error) => { console.error("Failed to dynamically import defaultOpeningStrategy.js", error); });
+// Fails safe (no automated opening attacks fire) rather than throwing, for the pathological
+// case where readStrategy() runs before the import above has resolved.
+const EMPTY_STRATEGY_FALLBACK = { name: "fallback (import not yet resolved)", endTick: 0, attacks: [] };
 
 const KEY_RATIOS = {
     "+": 6 / 5,
@@ -18,7 +32,7 @@ const KEY_RATIOS = {
     a: 31 / 32
 };
 
-const AUTO_ATTACK_MODES = new Set(["off", "best", "v20reserve"]);
+const AUTO_ATTACK_MODES = new Set(["off", "best", "v20reserve", "messiah"]);
 const BOT_ATTACK_TELEMETRY_STORAGE_KEY = "fx_bot_attack_telemetry";
 
 function clamp(value, min, max) {
@@ -69,7 +83,10 @@ function exactTickToInternalTick(cycle, exactTick) {
 
 function readStrategy(settings = getSettings()) {
     const raw = settings.openingAutomationStrategy?.trim();
-    if (!raw) return DEFAULT_STRATEGY;
+    if (!raw) {
+        if (!cachedDefaultStrategy) console.warn("defaultOpeningStrategy.js dynamic import has not resolved yet; opening automation will not fire this call");
+        return cachedDefaultStrategy || EMPTY_STRATEGY_FALLBACK;
+    }
     return JSON.parse(raw);
 }
 
@@ -166,6 +183,7 @@ const openingAutomation = new (function () {
     this.infiniteExpansionLastPercent = null;
     this.infiniteExpansionPendingSends = [];
     this.findBestDynamicBotAttackTarget = () => null;
+    this.findMessiahBotAttackTarget = () => null;
     this.cancelPlayerAttack = () => false;
     this.cancelFreeLandAttack = () => false;
 
@@ -983,6 +1001,45 @@ const openingAutomation = new (function () {
             return;
         }
 
+        if (mode === "messiah") {
+            // Reachability-gated targeting, ported from genuine Project Messiah's micro()
+            // (see findMessiahBotAttackTarget in patches.js for what's actually preserved from
+            // the original vs. adapted -- MessiahLatestPort/PORT_PLAN.md has the full audit).
+            // Target-then-dose, like findBestDynamicBotAttackTarget: the returned selection
+            // carries its own percent sized off BFS-reachable land, not a shared spend budget,
+            // so no prepareBotSpendAttack call here.
+            if (this.autoAttackCount >= 10) return;
+            const attacksPerCycle = intervalMsToAttacksPerCycle(getBestAttackIntervalMs());
+            if (attacksPerCycle <= 0) return;
+            const tickInterval = Math.max(1, Math.round(100 / attacksPerCycle));
+            if (tick - this.autoAttackLastTick < tickInterval) return;
+
+            const selection = this.findMessiahBotAttackTarget(tick);
+            if (!selection || selection.target < 0) return;
+            window.__fx.keybindFunctions.setAbsolute(selection.percent);
+            window.__fx.keybindFunctions.repaintAttackPercentageBar();
+            const attackSnapshot = this.getBotAttackSnapshot(selection.target);
+            const attackAccepted = this.attackPlayer(selection.target);
+            if (!attackAccepted) return;
+            const attackEvent = this.recordBotAttackTelemetry(selection.target, {
+                snapshot: attackSnapshot,
+                mode,
+                kind: "messiah-reachability",
+                autoAttackCount: this.autoAttackCount,
+                cycleProgress: tickInCycle / 100,
+                score: selection.score,
+                oneShotRatio: selection.oneShotRatio,
+                reachRatio: selection.reachRatio
+            });
+            this.trackAutomatedBotAttack(selection.target, attackSnapshot);
+            this.scheduleBotAttackOutcomeCheck(attackEvent, selection.target);
+            this.autoAttackRecentTargets.set(selection.target, tick);
+            this.autoAttackLastTick = tick;
+            this.autoAttackLastAttackTime = performance.now();
+            this.autoAttackCount++;
+            return;
+        }
+
         if (mode === "raw") {
             if (this.autoAttackCount >= 10) return;
             while (this.autoAttackCheckSlot < 22 && tickInCycle >= Math.round(this.autoAttackCheckSlot * 100 / 22)) {
@@ -1164,7 +1221,7 @@ export function OpeningAutomationInput(containerElement) {
 
     const textarea = document.createElement("textarea");
     textarea.spellcheck = false;
-    textarea.value = getSettings().openingAutomationStrategy || JSON.stringify(DEFAULT_STRATEGY, null, 2);
+    textarea.value = getSettings().openingAutomationStrategy || JSON.stringify(cachedDefaultStrategy || EMPTY_STRATEGY_FALLBACK, null, 2);
     textarea.addEventListener("input", () => {
         getSettings().openingAutomationStrategy = textarea.value;
     });
@@ -1195,4 +1252,4 @@ export function openingAutomationKeyHandler() {
 }
 
 export default openingAutomation;
-export { DEFAULT_STRATEGY, normalizeStrategy };
+export { normalizeStrategy };
