@@ -1,10 +1,10 @@
 {
-    "version": "0.6.29",
-    "lastUpdated": "August 21",
+    "version": "0.6.29.1",
+    "lastUpdated": "September 15",
     "changes": [
-        "Rebuilt against Territorial.io 2.16.46 — the client works with the current game update again.",
-        "The automation's game-internal lookups (border tiles, tile ownership, attack sending and cancelling) were re-derived for this game build and are now verified at build time, so a future game update fails the build instead of silently breaking targeting.",
-        "Picked up the FX Client 0.6.29 fixes: gamemode-aware IP highlighting, player names no longer parsed as HTML, and the obsolete hostname-detection patch removed."
+        "Rebuilt against Territorial.io 2.16.51 — the client works with the current game update again.",
+        "The automation's game-internal lookups (border tiles, tile ownership, attack sending and cancelling, map-render state) were re-derived for this game build and verified at build time.",
+        "Picked up upstream FX Client 0.6.29.1 (patches for the recent game updates)."
     ],
     "isSignificant": true
 }

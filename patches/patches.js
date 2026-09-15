@@ -55,7 +55,7 @@ function applyPatches(/** @type {ModUtils} */ modUtils) {
     // Raw game-internal names the injected automation code reads directly. Unlike `dict`,
     // these are not discovered by build.js's pattern matching: they are the obfuscated
     // spellings for the game build this client was last updated against (Territorial.io
-    // 2.16.46) and the obfuscator reshuffles them on every release. The readable names are
+    // 2.16.51) and the obfuscator reshuffles them on every release. The readable names are
     // from the deobfuscation project in ../deobfuscate (its function-mappings.json /
     // property-mappings.json translate a name from one release to the next). Every entry is
     // checked below for presence, which catches the common case where a name disappears
@@ -67,25 +67,26 @@ function applyPatches(/** @type {ModUtils} */ modUtils) {
         attackManager: "ae",            // global AttackManager instance
         protocolHandler: "bB",          // global ProtocolHandler instance
         teamUtils: "bv",                // global TeamUtils instance
-        playerTiles: "h7",              // PlayerData.playerTiles[player]: that player's border tiles
-        neighborOffsets: "fT",          // MapData.neighborOffsets: 4-direction offsets, sized to map width
-        isNeutralTile: "fI",            // MapData.isNeutralTile(tile)
-        isOwnedTile: "h1",              // MapData.isOwnedTile(tile)
-        getTileOwner: "fJ",             // MapData.getTileOwner(tile)
-        getAvailableAttackCount: "gY",  // AttackManager.getAvailableAttackCount(player)
-        getAttackTarget: "gd",          // AttackManager.getAttackTarget(player, attackIndex)
-        getAttackValue: "ge",           // AttackManager.getAttackValue(player, attackIndex)
-        gameCommandSender: "hr",        // ProtocolHandler.gameCommandSender
-        sendAttack: "hy",               // GameCommandSender.sendAttack(sliderValue, target)
-        cancelAttack: "q0",             // GameCommandSender.cancelAttack(target)
-        canAttack: "fK",                // TeamUtils.canAttack(attacker, target)
-        mapIsRendered: "xr",            // MapManager.xr: the map raster has been drawn and is on screen
+        playerTiles: "hF",              // PlayerData.playerTiles[player]: that player's border tiles
+        neighborOffsets: "fb",          // MapData.neighborOffsets: 4-direction offsets, sized to map width
+        isNeutralTile: "fQ",            // MapData.isNeutralTile(tile)
+        isOwnedTile: "h9",              // MapData.isOwnedTile(tile)
+        getTileOwner: "fR",             // MapData.getTileOwner(tile)
+        getAvailableAttackCount: "gg",  // AttackManager.getAvailableAttackCount(player)
+        getAttackTarget: "gl",          // AttackManager.getAttackTarget(player, attackIndex)
+        getAttackValue: "gm",           // AttackManager.getAttackValue(player, attackIndex)
+        gameCommandSender: "hz",        // ProtocolHandler.gameCommandSender
+        sendAttack: "i6",               // GameCommandSender.sendAttack(sliderValue, target)
+        cancelAttack: "r0",             // GameCommandSender.cancelAttack(target)
+        canAttack: "fS",                // TeamUtils.canAttack(attacker, target)
+        mapIsRendered: "yl",            // MapManager.yl: the map raster has been drawn and is on screen
     };
 
     // Each raw name above must at least still appear in the game script in the access shape the
     // automation uses it in. A missing one means the game update moved it: look the readable
     // name up in ../deobfuscate/generated/*-mappings.json to find its new spelling. Presence is
     // necessary, not sufficient -- see the note on the table above.
+    const missingRawNames = [];
     [
         [`${g.mapData}.${g.neighborOffsets}`, "MapData.neighborOffsets"],
         [`${g.mapData}.${g.isNeutralTile}(`, "MapData.isNeutralTile"],
@@ -98,12 +99,14 @@ function applyPatches(/** @type {ModUtils} */ modUtils) {
         [`${g.protocolHandler}.${g.gameCommandSender}.${g.sendAttack}(`, "GameCommandSender.sendAttack"],
         [`${g.protocolHandler}.${g.gameCommandSender}.${g.cancelAttack}(`, "GameCommandSender.cancelAttack"],
         [`${g.teamUtils}.${g.canAttack}(`, "TeamUtils.canAttack"],
-        [`${dict.mapHolder}.${g.mapIsRendered}`, "MapManager.xr"],
+        [`${dict.mapHolder}.${g.mapIsRendered}`, "MapManager.mapIsRendered"],
     ].forEach(([access, readableName]) => {
         if (!modUtils.script.includes(access))
-            throw new Error(`Automation raw name check failed: "${access}" (${readableName}) is not in this game build. `
-                + `The game was updated -- re-derive it from ../deobfuscate and update the "g" table in patches/patches.js.`);
+            missingRawNames.push(`"${access}" (${readableName})`);
     });
+    if (missingRawNames.length)
+        throw new Error(`Automation raw name check failed for: ${missingRawNames.join(", ")}. `
+            + `The game was updated -- re-derive them from ../deobfuscate and update the "g" table in patches/patches.js.`);
 
     // Replace assets
     replaceOne(/(\(4,"crown",4,")[^"]+"\),/g, "$1" + assets.crownIcon + "\"),");
