@@ -425,7 +425,7 @@ label.checkbox .checkmark:after {
 	bottom: 86px;
 	z-index: 2147483647 !important;
 	display: none !important;
-	width: 240px;
+	width: 252px;
 	grid-template-columns: 1fr;
 	gap: 5px;
 	transform: none;
@@ -491,7 +491,7 @@ label.checkbox .checkmark:after {
 
 #demonAutomationControls .bot-rate-control {
 	display: grid;
-	grid-template-columns: 64px 1fr 24px;
+	grid-template-columns: 64px 1fr 42px;
 	align-items: center;
 	gap: 6px;
 	min-width: 0;
